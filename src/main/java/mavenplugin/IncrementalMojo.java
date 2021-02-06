@@ -1,5 +1,7 @@
 package mavenplugin;
 
+import mavenplugin.failtest.FailedTestStrategy;
+import mavenplugin.failtest.FailedTestStrategyFactory;
 import mavenplugin.io.IOFunctions;
 import mavenplugin.time.TimeDiff;
 import org.apache.maven.plugin.AbstractMojo;
@@ -40,13 +42,26 @@ public class IncrementalMojo extends AbstractMojo {
     @Parameter(defaultValue = "${project.build.outputDirectory}", readonly = true, required = true)
     private File outputDirectory;
 
+    @Parameter(property = "skipTests", defaultValue = "false", readonly = true, required = true)
+    private String skipTests;
+
+    private final FailedTestStrategyFactory failedTestStrategyFactory = new FailedTestStrategyFactory(this);
+
     public void execute() {
 
         long start = System.currentTimeMillis();
         checkForModification();
-        checkForFailedTests();
+        rerunOnFailedTests();
         long total = System.currentTimeMillis() - start;
         info(String.format("Total time %s ms", total));
+    }
+
+    private void rerunOnFailedTests() {
+
+        FailedTestStrategy failedTestStrategy = failedTestStrategyFactory.make();
+
+        if (failedTestStrategy.hasFailedTests())
+            failedTestStrategy.prepareForCompilation();
     }
 
     private void checkForModification() {
@@ -74,7 +89,7 @@ public class IncrementalMojo extends AbstractMojo {
 
     }
 
-    private void cleanTargetLocation(Path rootTarget) {
+    public void cleanTargetLocation(Path rootTarget) {
 
         assert rootTarget.endsWith("target");
 
@@ -83,7 +98,7 @@ public class IncrementalMojo extends AbstractMojo {
                 .forEach(IOFunctions::deleteFiles);
     }
 
-    private void createTimeStampFile(Path rootTarget) {
+    public void createTimeStampFile(Path rootTarget) {
         rootTarget.toFile().mkdir();
         Path timeStampFile = new File(rootTarget.toFile(), TIMESTAMP_FILE).toPath();
         IOFunctions.touch(timeStampFile);
@@ -191,72 +206,15 @@ public class IncrementalMojo extends AbstractMojo {
         getLog().info(String.format(template, args));
     }
 
-    @Parameter(property = "skipTests", defaultValue = "false", readonly = true, required = true)
-    private String skipTests;
-
-    private void checkForFailedTests() {
-
-        if (!hasSurefirePlugin()) return;
-
-        assert outputDirectory.getParentFile().getName().equals("target") : "not in the target directory";
-
-        String surefireOutputDirectory = outputDirectory.getParentFile().toString()
-                + File.separator + "surefire-reports";
-
-        long failedTests = surefireFilesWithErrors(surefireOutputDirectory).count();
-
-        if (failedTests == 0) return;
-
-        info("Tests with errors: %s .. force cleaning on failing tests", failedTests);
-        prepareForCompilationWithFailedTests(outputDirectory);
+    public String getSkipTests() {
+        return skipTests;
     }
 
-    private void prepareForCompilationWithFailedTests(File targetLocation) {
-
-        Path rootTarget = targetLocation.getParentFile().toPath();
-
-        cleanTargetLocation(rootTarget);
-        createTimeStampFile(rootTarget);
-
-        project.getProperties().setProperty("skipTests", skipTests); // restore skipTests
-
+    public File getOutputDirectory() {
+        return outputDirectory;
     }
 
-    private boolean hasSurefirePlugin() {
-
-        boolean hasSurefireDependency = project.getBuildPlugins().stream()
-                .anyMatch(dependency ->
-                        dependency.getArtifactId().equals("maven-surefire-plugin"));
-
-        assert hasSurefireDependency
-                : "compilerplugin requires maven-surefire-plugin to force cleaning on failing tests";
-
-        return hasSurefireDependency;
-
-    }
-
-    private Stream<File> surefireFilesWithErrors(String sureFireLocation) {
-        return streamOfNullable(
-                Paths.get(sureFireLocation).toFile().listFiles(
-                        (file) -> file.getName().endsWith("Test.txt")))
-                .map(File::toPath)
-                .filter((file)-> {
-                    return getLinesOrNothing(file).limit(5) // head of the file
-                            .anyMatch(s -> (s.contains("Errors: ") && !s.contains("Errors: 0")));
-                }).map(Path::toFile);
-    }
-
-    public <T> Stream<T> streamOfNullable(T[] array) {
-        return array == null
-                ? Stream.empty()
-                : Stream.of(array);
-    }
-
-    private Stream<String> getLinesOrNothing(Path path) {
-        try {
-            return Files.lines(path);
-        } catch (IOException e) {
-            return Stream.empty();
-        }
+    public MavenProject getProject() {
+        return project;
     }
 }
