@@ -9,6 +9,7 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -43,6 +44,7 @@ public class IncrementalMojo extends AbstractMojo {
 
         long start = System.currentTimeMillis();
         checkForModification();
+        checkForFailedTests();
         long total = System.currentTimeMillis() - start;
         info(String.format("Total time %s ms", total));
     }
@@ -73,6 +75,9 @@ public class IncrementalMojo extends AbstractMojo {
     }
 
     private void cleanTargetLocation(Path rootTarget) {
+
+        assert rootTarget.endsWith("target");
+
         Stream.of(rootTarget)
                 .filter(Files::exists)
                 .forEach(IOFunctions::deleteFiles);
@@ -184,5 +189,74 @@ public class IncrementalMojo extends AbstractMojo {
 
     private void info(String template, Object... args) {
         getLog().info(String.format(template, args));
+    }
+
+    @Parameter(property = "skipTests", defaultValue = "false", readonly = true, required = true)
+    private String skipTests;
+
+    private void checkForFailedTests() {
+
+        if (!hasSurefirePlugin()) return;
+
+        assert outputDirectory.getParentFile().getName().equals("target") : "not in the target directory";
+
+        String surefireOutputDirectory = outputDirectory.getParentFile().toString()
+                + File.separator + "surefire-reports";
+
+        long failedTests = surefireFilesWithErrors(surefireOutputDirectory).count();
+
+        if (failedTests == 0) return;
+
+        info("Tests with errors: %s .. force cleaning on failing tests", failedTests);
+        prepareForCompilationWithFailedTests(outputDirectory);
+    }
+
+    private void prepareForCompilationWithFailedTests(File targetLocation) {
+
+        Path rootTarget = targetLocation.getParentFile().toPath();
+
+        cleanTargetLocation(rootTarget);
+        createTimeStampFile(rootTarget);
+
+        project.getProperties().setProperty("skipTests", skipTests); // restore skipTests
+
+    }
+
+    private boolean hasSurefirePlugin() {
+
+        boolean hasSurefireDependency = project.getBuildPlugins().stream()
+                .anyMatch(dependency ->
+                        dependency.getArtifactId().equals("maven-surefire-plugin"));
+
+        assert hasSurefireDependency
+                : "compilerplugin requires maven-surefire-plugin to force cleaning on failing tests";
+
+        return hasSurefireDependency;
+
+    }
+
+    private Stream<File> surefireFilesWithErrors(String sureFireLocation) {
+        return streamOfNullable(
+                Paths.get(sureFireLocation).toFile().listFiles(
+                        (file) -> file.getName().endsWith("Test.txt")))
+                .map(File::toPath)
+                .filter((file)-> {
+                    return getLinesOrNothing(file).limit(5) // head of the file
+                            .anyMatch(s -> (s.contains("Errors: ") && !s.contains("Errors: 0")));
+                }).map(Path::toFile);
+    }
+
+    public <T> Stream<T> streamOfNullable(T[] array) {
+        return array == null
+                ? Stream.empty()
+                : Stream.of(array);
+    }
+
+    private Stream<String> getLinesOrNothing(Path path) {
+        try {
+            return Files.lines(path);
+        } catch (IOException e) {
+            return Stream.empty();
+        }
     }
 }

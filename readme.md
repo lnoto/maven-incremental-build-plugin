@@ -3,7 +3,7 @@
 1. Unable to identify deleted files
 2. Executes unit tests even when no source code is changed
 
-This maven plugin addreses both the issues by
+This maven plugin addresses both the issues by
  1. Cleaning target location when code is changed and trigger full build.
  2. Disable unit test when no code is changed.
 
