@@ -57,11 +57,8 @@ public class IncrementalMojo extends AbstractMojo {
     }
 
     private void rerunOnFailedTests() {
-
-        FailedTestStrategy failedTestStrategy = failedTestStrategyFactory.make();
-
-        if (failedTestStrategy.hasFailedTests())
-            failedTestStrategy.prepareForCompilation();
+        if ("true".equals(skipTests)) return;
+        failedTestStrategyFactory.make().apply();
     }
 
     private void checkForModification() {
@@ -89,16 +86,14 @@ public class IncrementalMojo extends AbstractMojo {
 
     }
 
-    public void cleanTargetLocation(Path rootTarget) {
-
+    private void cleanTargetLocation(Path rootTarget) {
         assert rootTarget.endsWith("target");
-
         Stream.of(rootTarget)
                 .filter(Files::exists)
                 .forEach(IOFunctions::deleteFiles);
     }
 
-    public void createTimeStampFile(Path rootTarget) {
+    private void createTimeStampFile(Path rootTarget) {
         rootTarget.toFile().mkdir();
         Path timeStampFile = new File(rootTarget.toFile(), TIMESTAMP_FILE).toPath();
         IOFunctions.touch(timeStampFile);
