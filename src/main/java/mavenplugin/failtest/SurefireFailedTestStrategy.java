@@ -2,12 +2,16 @@ package mavenplugin.failtest;
 
 import mavenplugin.IncrementalMojo;
 import mavenplugin.io.IOFunctions;
+import org.apache.maven.model.Plugin;
+import org.codehaus.plexus.util.xml.Xpp3Dom;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Optional;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class SurefireFailedTestStrategy implements FailedTestStrategy {
@@ -25,39 +29,68 @@ public class SurefireFailedTestStrategy implements FailedTestStrategy {
     @Override
     public void apply() {
 
-        Path rootTarget = mojo.getOutputDirectory().getParentFile().toPath();
-        assert rootTarget.getFileName().toString().equals("target") : "not in the target directory";
+        Path targetDirectory = getTargetLocation();
+        assert targetDirectory.getFileName().toString().equals("target") : "not in the target directory";
 
-        boolean hasFailedTests = hasFailTestMark(rootTarget) || countFailedTestsWithSurefire() > 0;
-        markDirectoryIfFailedTests(rootTarget, hasFailedTests);
+        int countFailedTests = countFailedTestsWithSurefire();
+        markDirectory(targetDirectory, countFailedTests > 0);
 
+        boolean hasFailedTests = hasFailTestMark(targetDirectory) || countFailedTests > 0;
         if (!hasFailedTests) return;
-        info("This project or module might have tests with errors .. forcing tests");
 
+        info("This project or module might have tests with errors");
         mojo.getProject().getProperties().setProperty("skipTests",
                 initialValueOfSkipTests); // restore skipTests
     }
 
-    private boolean hasFailTestMark(Path rootTarget) {
-        File markFile = new File(rootTarget.toFile(), MARK_FAILTEST_FILE);
+    protected int countFailedTestsWithSurefire() {
+        Path surefireOutputDirectory = getSurefireLocation();
+        return surefireFilesWithErrors(surefireOutputDirectory).collect(
+                Collectors.reducing(0, c -> 1, Integer::sum));
+    }
+
+    protected Path getSurefireLocation() {
+        Path defaultSurefireLocation = getTargetLocation().resolve("surefire-reports");
+        return findSurefireLocationInConfig(
+                Stream.concat(mojo.getProject().getBuildPlugins().stream(),
+                        mojo.getProject().getPluginManagement().getPlugins().stream()))
+                .orElse(defaultSurefireLocation);
+    }
+
+    private Optional<Path> findSurefireLocationInConfig(Stream<Plugin> stream) {
+        Optional<Path> configuredSurefireLocation = Optional.empty();
+    try {
+        configuredSurefireLocation = stream
+            .filter(plugin -> plugin.getArtifactId().equals("maven-surefire-plugin")
+                    && null != plugin.getConfiguration()
+                    && ((Xpp3Dom) plugin.getConfiguration()).getChild("reportsDirectory") != null)
+            .map(plugin -> ((Xpp3Dom) plugin.getConfiguration()).getChild("reportsDirectory"))
+            .findFirst().map(property -> Paths.get(property.getValue()));
+    } catch (Exception e) {
+        // null or class cast turned into a warning
+        warn("Unable to parse reportsDirectory from maven-surefire-plugin config: %s", e);
+    }
+        return configuredSurefireLocation;
+    }
+
+    private Path getTargetLocation() {
+        return mojo.getOutputDirectory().getParentFile().toPath();
+    }
+
+    private boolean hasFailTestMark(Path location) {
+        File markFile = new File(location.toFile(), MARK_FAILTEST_FILE);
         return markFile.exists();
     }
 
-    private long countFailedTestsWithSurefire() {
-        File targetDirectory = mojo.getOutputDirectory().getParentFile();
-        String surefireOutputDirectory = targetDirectory + File.separator + "surefire-reports";
-        return surefireFilesWithErrors(surefireOutputDirectory).count();
-    }
-
-    private void markDirectoryIfFailedTests(Path rootTarget, boolean hasFailedTests) {
-        Path mark = new File(rootTarget.toFile(), MARK_FAILTEST_FILE).toPath();
+    private void markDirectory(Path location, boolean hasFailedTests) {
+        Path mark = new File(location.toFile(), MARK_FAILTEST_FILE).toPath();
         if (mark.toFile().exists()) IOFunctions.deleteFiles(mark);
         if (hasFailedTests) IOFunctions.touch(mark);
     }
 
-    private Stream<File> surefireFilesWithErrors(String sureFireLocation) {
+    private Stream<File> surefireFilesWithErrors(Path surefireLocation) {
         return streamOfNullable(
-                Paths.get(sureFireLocation).toFile().listFiles(
+                surefireLocation.toFile().listFiles(
                         f -> f.getName().endsWith("Test.txt")))
                 .map(File::toPath)
                 .filter(f -> getLinesOrNothing(f).limit(5) // head of the file
@@ -65,7 +98,7 @@ public class SurefireFailedTestStrategy implements FailedTestStrategy {
                 ).map(Path::toFile);
     }
 
-    public <T> Stream<T> streamOfNullable(T[] array) {
+    private <T> Stream<T> streamOfNullable(T[] array) {
         return array == null
                 ? Stream.empty()
                 : Stream.of(array);
@@ -79,7 +112,6 @@ public class SurefireFailedTestStrategy implements FailedTestStrategy {
         }
     }
 
-    private void info(String template, Object... args) {
-        mojo.getLog().info(String.format(template, args));
-    }
+    private void info(String template, Object... args) { mojo.getLog().info(String.format(template, args)); }
+    private void warn(String template, Object... args) { mojo.getLog().warn(String.format(template, args)); }
 }

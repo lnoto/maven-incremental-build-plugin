@@ -27,7 +27,7 @@ import java.util.stream.Stream;
 
 import static java.util.Optional.ofNullable;
 
-@Mojo(name = "inc", defaultPhase = LifecyclePhase.PRE_CLEAN)
+@Mojo(name = "incremental", defaultPhase = LifecyclePhase.PRE_CLEAN)
 public class IncrementalMojo extends AbstractMojo {
 
     private static final String TIMESTAMP_FILE = "buildcheck.timestamp";

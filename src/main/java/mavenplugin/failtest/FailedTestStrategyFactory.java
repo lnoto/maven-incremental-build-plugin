@@ -21,8 +21,7 @@ public class FailedTestStrategyFactory {
 
     private boolean hasSurefirePlugin() {
         boolean hasSurefireDependency = mojo.getProject().getBuildPlugins().stream()
-                .anyMatch(dependency ->
-                        dependency.getArtifactId().equals("maven-surefire-plugin"));
+                .anyMatch(plugin -> plugin.getArtifactId().equals("maven-surefire-plugin"));
         return hasSurefireDependency;
     }
 

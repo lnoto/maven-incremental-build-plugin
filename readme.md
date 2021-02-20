@@ -25,7 +25,7 @@ sandbox code available @ https://github.com/ashkrit/corejava/tree/master/compile
                         <id>pre-clean</id>
                         <phase>pre-clean</phase>
                         <goals>
-                            <goal>inc</goal>
+                            <goal>incremental</goal>
                         </goals>
                     </execution>
                 </executions>
